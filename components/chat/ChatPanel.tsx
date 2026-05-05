@@ -25,7 +25,8 @@ export function ChatPanel({
   contactInitials,
   isOnline = false,
 }: ChatPanelProps) {
-  const { user, privateKey, getToken } = useAuth();
+  // const { user, privateKey, getToken } = useAuth();
+  const { user, privateKey, getToken, accessToken } = useAuth();  
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -107,10 +108,8 @@ export function ChatPanel({
     init();
   }, [contactId, privateKey, user]);
 
-  // WebSocket setup 
   useEffect(() => {
-    if (!privateKey || !user) return;
-
+  if (!privateKey || !user || !accessToken) return;
     async function connectSocket() {
       const token = await getToken();
         console.log("Token at socket connect:", token);
@@ -149,7 +148,7 @@ export function ChatPanel({
       socketRef.current?.disconnect();
       socketRef.current = null;
     };
-  }, [privateKey, user]);
+  }, [privateKey, user, accessToken]);
 
   async function sendMessage() {
     const text = input.trim();

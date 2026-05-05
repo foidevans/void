@@ -145,6 +145,10 @@ body {
   box-shadow: 0 4px 12px -4px var(--accent-glow);
 }
 
+input:focus {
+  outline: none;
+  box-shadow: none;
+}
 /* ── GLASS CARD ── */
 .glass-card {
   background: var(--bg-card);
