@@ -3,19 +3,21 @@ const RSA_HASH = "SHA-256";
 const RSA_KEY_SIZE = 2048;
 
 const AES_ALGO = "AES-GCM";
-const AES_KEY_LENGTH = 256; 
-const AES_IV_LENGTH = 12;   
+const AES_KEY_LENGTH = 256;
+const AES_IV_LENGTH = 12;
 
-const AES_KW_ALGO = "AES-KW";
+const AES_KW_ALGO = "AES-GCM";
 const AES_KW_LENGTH = 256;
+const WRAP_IV_LENGTH = 12;
 
-const PBKDF2_ITERATIONS = 310_000; 
+const PBKDF2_ITERATIONS = 310_000;
 const PBKDF2_HASH = "SHA-256";
-const SALT_LENGTH = 16; 
+const SALT_LENGTH = 16;
 
 
 export const encode = (text: string): ArrayBuffer =>
   new TextEncoder().encode(text).buffer as ArrayBuffer;
+
 export const decode = (buffer: ArrayBuffer): string =>
   new TextDecoder().decode(buffer);
 
@@ -35,10 +37,12 @@ export const base64ToBuffer = (base64: string): ArrayBuffer => {
   return bytes.buffer as ArrayBuffer;
 };
 
+
 export const generateSalt = (): string => {
   const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
   return bufferToBase64(salt.buffer as ArrayBuffer);
 };
+
 
 export const deriveWrappingKey = async (
   password: string,
@@ -63,16 +67,16 @@ export const deriveWrappingKey = async (
     },
     keyMaterial,
     { name: AES_KW_ALGO, length: AES_KW_LENGTH },
-    false, 
-    ["wrapKey", "unwrapKey"]
+    false,
+    ["encrypt", "decrypt"]
   );
 };
 
 
 export interface KeyPairResult {
-  publicKeyBase64: string;       
-  wrappedPrivateKeyBase64: string; 
-  privateKey: CryptoKey;         
+  publicKeyBase64: string;
+  wrappedPrivateKeyBase64: string;
+  privateKey: CryptoKey;
 }
 
 export const generateKeyPair = async (
@@ -82,23 +86,31 @@ export const generateKeyPair = async (
     {
       name: RSA_ALGO,
       modulusLength: RSA_KEY_SIZE,
-      publicExponent: new Uint8Array([1, 0, 1]), 
+      publicExponent: new Uint8Array([1, 0, 1]),
       hash: RSA_HASH,
     },
-    true, 
+    true,
     ["encrypt", "decrypt"]
   );
 
   const publicKeySpki = await crypto.subtle.exportKey("spki", keyPair.publicKey);
   const publicKeyBase64 = bufferToBase64(publicKeySpki);
 
-  const wrappedPrivateKey = await crypto.subtle.wrapKey(
-    "pkcs8",
-    keyPair.privateKey,
+  const privateKeyPkcs8 = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+
+  const wrapIv = crypto.getRandomValues(new Uint8Array(WRAP_IV_LENGTH)).buffer as ArrayBuffer;
+
+  const wrappedBuffer = await crypto.subtle.encrypt(
+    { name: AES_KW_ALGO, iv: wrapIv },
     wrappingKey,
-    AES_KW_ALGO
+    privateKeyPkcs8
   );
-  const wrappedPrivateKeyBase64 = bufferToBase64(wrappedPrivateKey);
+
+  const combined = new Uint8Array(WRAP_IV_LENGTH + wrappedBuffer.byteLength);
+  combined.set(new Uint8Array(wrapIv), 0);
+  combined.set(new Uint8Array(wrappedBuffer), WRAP_IV_LENGTH);
+
+  const wrappedPrivateKeyBase64 = bufferToBase64(combined.buffer as ArrayBuffer);
 
   return {
     publicKeyBase64,
@@ -107,22 +119,31 @@ export const generateKeyPair = async (
   };
 };
 
+
 export const unwrapPrivateKey = async (
   wrappedPrivateKeyBase64: string,
   wrappingKey: CryptoKey
 ): Promise<CryptoKey> => {
-  const wrappedKeyBuffer = base64ToBuffer(wrappedPrivateKeyBase64);
+  const combined = new Uint8Array(base64ToBuffer(wrappedPrivateKeyBase64));
 
-  return crypto.subtle.unwrapKey(
-    "pkcs8",
-    wrappedKeyBuffer,
+  const iv = combined.slice(0, WRAP_IV_LENGTH).buffer as ArrayBuffer;
+  const wrappedKey = combined.slice(WRAP_IV_LENGTH).buffer as ArrayBuffer;
+
+  const privateKeyPkcs8 = await crypto.subtle.decrypt(
+    { name: AES_KW_ALGO, iv },
     wrappingKey,
-    AES_KW_ALGO,
+    wrappedKey
+  );
+
+  return crypto.subtle.importKey(
+    "pkcs8",
+    privateKeyPkcs8,
     { name: RSA_ALGO, hash: RSA_HASH },
-    false, 
+    false,
     ["decrypt"]
   );
 };
+
 
 export const importPublicKey = async (
   publicKeyBase64: string
@@ -140,25 +161,26 @@ export const importPublicKey = async (
 
 
 export interface EncryptedPayload {
-  ciphertext: string;           
-  iv: string;                   
-  encryptedKey: string;        
-  encryptedKeyForSelf: string; 
+  ciphertext: string;
+  iv: string;
+  encryptedKey: string;
+  encryptedKeyForSelf: string;
 }
-
 
 export const encryptMessage = async (
   plaintext: string,
   recipientPublicKey: CryptoKey,
   myPublicKey: CryptoKey
 ): Promise<EncryptedPayload> => {
+  // Fresh AES-GCM key per message
   const aesKey = await crypto.subtle.generateKey(
     { name: AES_ALGO, length: AES_KEY_LENGTH },
-    true, 
+    true,
     ["encrypt", "decrypt"]
   );
 
-const iv = crypto.getRandomValues(new Uint8Array(AES_IV_LENGTH)).buffer as ArrayBuffer;
+  const iv = crypto.getRandomValues(new Uint8Array(AES_IV_LENGTH)).buffer as ArrayBuffer;
+
   const ciphertextBuffer = await crypto.subtle.encrypt(
     { name: AES_ALGO, iv },
     aesKey,
