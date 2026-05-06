@@ -1,68 +1,270 @@
+// "use client";
+
+// import { useState } from "react";
+// import { NavRail } from "@/components/chat/NavRail";
+// import { ThreadsPanel, type Thread } from "@/components/chat/ThreadsPanel";
+// import { ChatPanel } from "@/components/chat/ChatPanel";
+// import { ThemeToggle } from "@/components/ui/ThemeToggle";
+
+// const THREADS: Thread[] = [
+//   {
+//     id: "1",
+//     name: "Lee min ho",
+//     preview: "The architectural void is ready for...",
+//     time: "2m",
+//     online: true,
+//     initials: "LMH",
+//     avatarColor: "linear-gradient(135deg, #3b3060, #6c3bff)",
+//   },
+//   {
+//     id: "2",
+//     name: "Park seon joon",
+//     preview: "Did you see the new gradients?",
+//     time: "1h",
+//     unread: 3,
+//     initials: "PSJ",
+//     avatarColor: "linear-gradient(135deg, #1a3a2a, #1d9e75)",
+//   },
+//   {
+//     id: "3",
+//     name: "Gong yoon",
+//     preview: "Let's connect on the spatial design.",
+//     time: "Yesterday",
+//     initials: "GY",
+//     avatarColor: "linear-gradient(135deg, #3a1a2a, #d4537e)",
+//   },
+// ];
+
+// export default function ChatPage() {
+//   const [activeThreadId, setActiveThreadId] = useState("1");
+
+//   const activeThread = THREADS.find((t) => t.id === activeThreadId) ?? THREADS[0];
+
+//   return (
+//     <div className="flex h-screen w-full overflow-hidden">
+//       <ThemeToggle />
+
+//       <div className="hidden sm:block flex-shrink-0">
+//         <NavRail />
+//       </div>
+
+//       <div className="hidden md:block w-[300px] lg:w-[320px] flex-shrink-0 h-full">
+//         <ThreadsPanel
+//           threads={THREADS}
+//           activeId={activeThreadId}
+//           onSelect={setActiveThreadId}
+//         />
+//       </div>
+
+//       <div className="flex-1 min-w-0 h-full">
+//       <ChatPanel 
+//   contactId={activeThread.id}      
+//   contactName={activeThread.name}
+//   contactInitials={activeThread.initials} 
+//   isOnline={activeThread.online} 
+// />
+//       </div>
+//     </div>
+//   );
+// }
+
+
+
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+import { conversationsApi, type Conversation } from "@/lib/api";
 import { NavRail } from "@/components/chat/NavRail";
 import { ThreadsPanel, type Thread } from "@/components/chat/ThreadsPanel";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { UserSearch } from "@/components/chat/UserSearch";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
-
-const THREADS: Thread[] = [
-  {
-    id: "1",
-    name: "Lee min ho",
-    preview: "The architectural void is ready for...",
-    time: "2m",
-    online: true,
-    initials: "LMH",
-    avatarColor: "linear-gradient(135deg, #3b3060, #6c3bff)",
-  },
-  {
-    id: "2",
-    name: "Park seon joon",
-    preview: "Did you see the new gradients?",
-    time: "1h",
-    unread: 3,
-    initials: "PSJ",
-    avatarColor: "linear-gradient(135deg, #1a3a2a, #1d9e75)",
-  },
-  {
-    id: "3",
-    name: "Gong yoon",
-    preview: "Let's connect on the spatial design.",
-    time: "Yesterday",
-    initials: "GY",
-    avatarColor: "linear-gradient(135deg, #3a1a2a, #d4537e)",
-  },
-];
+import type { SearchUser } from "@/lib/api";
 
 export default function ChatPage() {
-  const [activeThreadId, setActiveThreadId] = useState("1");
+  const router = useRouter();
+  const { accessToken, isLoading, getToken } = useAuth();
 
-  const activeThread = THREADS.find((t) => t.id === activeThreadId) ?? THREADS[0];
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeContactId, setActiveContactId] = useState<string | null>(null);
+  const [onlineUsers] = useState<Set<string>>(new Set());
+
+  // On mobile: track whether we're viewing threads or chat
+  const [mobileView, setMobileView] = useState<"threads" | "chat">("threads");
+
+  useEffect(() => {
+    if (!isLoading && !accessToken) router.push("/login");
+  }, [isLoading, accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    async function load() {
+      const token = await getToken();
+      if (!token) return;
+      try {
+        const data = await conversationsApi.list(token);
+        setConversations(data);
+        if (data.length > 0 && !activeContactId) {
+          setActiveContactId(data[0].user_id);
+        }
+      } catch {
+        // silent
+      }
+    }
+    load();
+  }, [accessToken]);
+
+  const threads: Thread[] = conversations.map((c) => ({
+    id: c.user_id,
+    name: c.display_name,
+    preview: "Tap to open conversation",
+    time: new Date(c.last_message_at).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    initials: c.display_name.slice(0, 2).toUpperCase(),
+    avatarColor: "linear-gradient(135deg, #3b3060, #6c3bff)",
+    online: onlineUsers.has(c.user_id),
+  }));
+
+  const activeThread = threads.find((t) => t.id === activeContactId);
+
+  function handleSelectThread(id: string) {
+    setActiveContactId(id);
+    setMobileView("chat"); // switch to chat view on mobile
+  }
+
+  function handleSelectUser(u: SearchUser) {
+    if (!conversations.some((c) => c.user_id === u.id)) {
+      setConversations((prev) => [
+        {
+          user_id: u.id,
+          display_name: u.display_name,
+          username: u.username,
+          last_message_at: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+    }
+    setActiveContactId(u.id);
+    setMobileView("chat");
+  }
+
+  function handleBack() {
+    setMobileView("threads");
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[var(--bg)]">
+        <p className="text-[12px] uppercase tracking-widest text-[var(--text-muted)]">
+          Initializing...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
       <ThemeToggle />
 
-      <div className="hidden sm:block flex-shrink-0">
+      {/* Nav rail — desktop only */}
+      <div className="hidden flex-shrink-0 md:block">
         <NavRail />
       </div>
 
-      <div className="hidden md:block w-[300px] lg:w-[320px] flex-shrink-0 h-full">
-        <ThreadsPanel
-          threads={THREADS}
-          activeId={activeThreadId}
-          onSelect={setActiveThreadId}
-        />
+      {/* ── DESKTOP LAYOUT ── */}
+      <div className="hidden md:flex flex-1 overflow-hidden">
+        {/* Threads panel */}
+        <div className="hidden h-full w-[300px] flex-shrink-0 flex-col md:flex lg:w-[320px]">
+          <UserSearch onSelectUser={handleSelectUser} />
+          <div className="flex-1 overflow-hidden">
+            <ThreadsPanel
+              threads={threads}
+              activeId={activeContactId ?? ""}
+              onSelect={handleSelectThread}
+            />
+          </div>
+        </div>
+
+        {/* Chat panel */}
+        <div className="flex h-full min-w-0 flex-1">
+          {activeThread ? (
+            <ChatPanel
+              contactId={activeThread.id}
+              contactName={activeThread.name}
+              contactInitials={activeThread.initials}
+              isOnline={activeThread.online}
+            />
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 opacity-30">
+              <span className="material-symbols-outlined text-5xl">chat_bubble</span>
+              <p className="text-[14px] text-[var(--text-muted)]">
+                Search for someone to start chatting
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 min-w-0 h-full">
-      <ChatPanel 
-  contactId={activeThread.id}      
-  contactName={activeThread.name}
-  contactInitials={activeThread.initials} 
-  isOnline={activeThread.online} 
-/>
+      {/* ── MOBILE LAYOUT ── */}
+      <div className="flex flex-1 flex-col overflow-hidden md:hidden">
+        {mobileView === "threads" ? (
+          /* Threads view */
+          <div className="flex h-full flex-col">
+            <UserSearch onSelectUser={handleSelectUser} />
+            <div className="flex-1 overflow-hidden">
+              <ThreadsPanel
+                threads={threads}
+                activeId={activeContactId ?? ""}
+                onSelect={handleSelectThread}
+              />
+            </div>
+
+            {/* Mobile bottom tab bar */}
+            <div className="flex items-center justify-around border-t border-[var(--border)] bg-[var(--bg-sidebar)] px-4 py-2">
+              {[
+                { icon: "home", label: "Home" },
+                { icon: "chat_bubble", label: "Chats", active: true },
+                { icon: "person_search", label: "Contacts" },
+                { icon: "settings", label: "Settings" },
+              ].map(({ icon, label, active }) => (
+                <button
+                  key={icon}
+                  className="flex flex-col items-center gap-0.5 px-3 py-1"
+                  style={{ color: active ? "var(--accent)" : "var(--text-muted)" }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 22 }}>
+                    {icon}
+                  </span>
+                  <span className="text-[10px]">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          /* Chat view with back button */
+          <div className="flex h-full flex-col">
+            {activeThread ? (
+              <ChatPanel
+                contactId={activeThread.id}
+                contactName={activeThread.name}
+                contactInitials={activeThread.initials}
+                isOnline={activeThread.online}
+                onBack={handleBack}
+              />
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 opacity-30">
+                <span className="material-symbols-outlined text-5xl">chat_bubble</span>
+                <p className="text-[14px] text-[var(--text-muted)]">
+                  Select a conversation
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

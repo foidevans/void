@@ -125,6 +125,7 @@ export class SocketManager {
 
 
   private scheduleReconnect(): void {
+     this.shouldReconnect = false;
     if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       this.handlers.onError(
         "Connection lost. Please refresh the page to reconnect."
